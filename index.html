@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanner Billet Offline</title>
+    <!-- On utilise le moteur ONNX directement depuis un lien (il sera mis en cache pour le hors-ligne) -->
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <style>
+        body { margin: 0; background: #000; color: white; text-align: center; font-family: sans-serif; }
+        video { width: 100%; height: 80vh; object-fit: cover; }
+        .btn-scan { width: 100px; height: 100px; border-radius: 50%; border: 5px solid white; background: transparent; color: white; font-size: 40px; margin-top: -50px; position: relative; z-index: 10; }
+        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 100; }
+        .icon { font-size: 150px; }
+        .retry { margin-top: 30px; padding: 15px 30px; border-radius: 30px; border: none; font-size: 20px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <video id="video" autoplay playsinline></video>
+    <button class="btn-scan" onclick="detecter()">📸</button>
+
+    <div id="overlay">
+        <div class="icon" id="resIcon"></div>
+        <button class="retry" onclick="reset()">REPRENDRE</button>
+    </div>
+
+    <canvas id="canvas" style="display:none;"></canvas>
+
+    <script>
+        let session;
+        const video = document.getElementById('video');
+
+        // 1. Charger le modèle ONNX au démarrage
+        async function loadModel() {
+            session = await ort.InferenceSession.create('./modele.onnx');
+            console.log("Modèle prêt pour le hors-ligne");
+        }
+        loadModel();
+
+        // 2. Activer la caméra
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+            .then(stream => { video.srcObject = stream; });
+
+        function parler(message) {
+            const speech = new SpeechSynthesisUtterance(message);
+            speech.lang = 'fr-FR';
+            window.speechSynthesis.speak(speech);
+        }
+
+        async function detecter() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 128; // Même taille que votre modèle
+            canvas.height = 128;
+            ctx.drawImage(video, 0, 0, 128, 128);
+
+            // Récupérer les pixels de l'image
+            const imgData = ctx.getImageData(0, 0, 128, 128).data;
+            const floatData = new Float32Array(128 * 128);
+            
+            // Convertir en niveaux de gris pour le modèle (exemple)
+            for (let i = 0; i < imgData.length; i += 4) {
+                floatData[i / 4] = (imgData[i] + imgData[i+1] + imgData[i+2]) / 3 / 255.0;
+            }
+
+            // Exécuter le modèle directement sur le téléphone !
+            const tensor = new ort.Tensor('float32', floatData, [1, 16384]);
+            const results = await session.run({ float_input: tensor });
+            const output = results[Object.keys(results)[0]].data[0];
+
+            // Affichage visuel et sonore
+            const overlay = document.getElementById('overlay');
+            overlay.style.display = 'flex';
+
+            if (output === 1) { // 1 = Vrai
+                overlay.style.backgroundColor = "green";
+                document.getElementById('resIcon').innerText = "✅";
+                parler("C'est un bon billet.");
+            } else {
+                overlay.style.backgroundColor = "red";
+                document.getElementById('resIcon').innerText = "❌";
+                parler("Attention, faux billet.");
+            }
+        }
+
+        function reset() {
+            document.getElementById('overlay').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
